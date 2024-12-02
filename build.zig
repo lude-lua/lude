@@ -1,4 +1,6 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const resolver = @import("./build/resolver.zig");
 
 const Build = std.Build;
 const Step = Build.Step;
@@ -6,13 +8,28 @@ const Step = Build.Step;
 const BuildOptions = struct {
     target: Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    version: []const u8 = "",
 };
 
+// Make sure in-sync with manifest file
+const minimium_requirement = "0.13.0";
+
+comptime {
+    if (!std.mem.eql(u8, builtin.zig_version_string, minimium_requirement)) {
+        @compileError("" ++
+            "Lude requires Zig version " ++ minimium_requirement ++ ", while the current one has version " ++
+            builtin.zig_version_string ++ ". Try download the specified Zig version to build Lude.");
+    }
+}
+
 pub fn build(b: *std.Build) !void {
-    const options = BuildOptions{
+    var options = BuildOptions{
         .target = b.standardTargetOptions(.{}),
         .optimize = b.standardOptimizeOption(.{}),
     };
+
+    const version = try resolver.resolveVersion(b, b.pathFromRoot("build.zig.zon"));
+    options.version = version;
 
     // Builds the Lude executable
     const exe = try buildExe(b, options);
@@ -36,22 +53,23 @@ pub fn build(b: *std.Build) !void {
     check_step.dependOn(&check_exe.step);
 }
 
-fn buildExe(b: *std.Build, options: BuildOptions) !Step.Compile {
+fn buildExe(b: *std.Build, options: BuildOptions) !*Step.Compile {
     const exe = b.addExecutable(.{
         .name = "lude",
+        .version = std.SemanticVersion.parse(options.version) catch unreachable,
         .root_source_file = b.path("src/main.zig"),
         .target = options.target,
         .optimize = options.optimize,
     });
 
     {
-        const lunaro = b.dependency("lunaro", .{
-            .lua = .lua54,
-            .shared = false,
-            .strip = options.optimize != .Debug,
+        const ziglua = b.dependency("ziglua", .{
             .target = options.target,
+            .optimize = options.optimize,
+            .lang = .lua54,
+            .shared = false,
         });
-        exe.root_module.addImport("lunaro", lunaro.module("lunaro"));
+        exe.root_module.addImport("ziglua", ziglua.module("ziglua"));
     }
 
     return exe;
